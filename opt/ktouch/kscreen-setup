@@ -1,0 +1,141 @@
+#!/bin/bash
+
+workpath=/opt/ktouch
+tmppath=/tmp/ktouch
+INPUT_FILE="$workpath/touch_dis_table.txt"
+OUTPUT_FILE="$workpath/config"
+LOG_FILE="$workpath/touchscreen.log"
+
+# 日志函数
+log_message() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') kscreen-setup : $1" | tee -a "$LOG_FILE"
+}
+
+mkdir -p /tmp/ktouch
+cd $workpath
+
+# 首先往setflag写入1停止监控
+echo -n "1" > $tmppath/setflag
+
+# 消灭监控进程
+log_message "关闭监控进程"
+sleep 2
+
+# 环境变量
+export DISPLAY=:0
+
+# 备份config文件
+echo -n "" > $workpath/config.bk
+cp $workpath/config $workpath/config.bk
+
+# 启动检测
+log_message "启动GUI化配置程序"
+$workpath/screen_binder
+log_message "配置过程结束"
+
+
+# ==============解析文件===============
+
+# 检查输入文件是否存在
+if [[ ! -f "$INPUT_FILE" ]]; then
+    log_message "错误: 输入文件 $INPUT_FILE 不存在"
+    exit 1
+fi
+
+echo -n "" > $workpath/config
+
+log_message "开始处理触摸屏设备信息"
+# 逐行读取输入文件
+while IFS='|' read -r display_name touchscreen_name touchscreen_id event_path; do
+    # 去除可能的空白字符
+    display_name=$(echo "$display_name" | xargs)
+    touchscreen_name=$(echo "$touchscreen_name" | xargs)
+    event_path=$(echo "$event_path" | xargs)
+    
+    log_message "处理设备: $touchscreen_name, 事件路径: $event_path"
+    
+    # 检查事件路径是否为空
+    if [[ -z "$event_path" ]]; then
+        log_message "警告: 事件路径为空，跳过此行"
+        continue
+    fi
+    
+    # 检查设备是否存在
+    if [[ ! -e "$event_path" ]]; then
+        log_message "警告: 设备路径 $event_path 不存在，跳过"
+        continue
+    fi
+    
+    # 使用udevadm查询设备信息
+    vid=""
+    pid=""
+    usb_path=""
+    
+    # 获取设备信息
+    device_info=$(udevadm info --query=property --path="$(udevadm info --query=path --name="$event_path" 2>/dev/null)" 2>/dev/null)
+    
+    if [[ -n "$device_info" ]]; then
+        # 提取VID和PID
+        vid=$(echo "$device_info" | grep -i "ID_VENDOR_ID" | cut -d= -f2 | head -n1)
+        pid=$(echo "$device_info" | grep -i "ID_MODEL_ID" | cut -d= -f2 | head -n1)
+        
+        # 提取USB路径
+        usb_path=$(echo "$device_info" | grep -i "ID_PATH" | grep -i "usb" | cut -d= -f2 | head -n1)
+        
+        # # 如果没找到USB路径，尝试其他方式
+        # if [[ -z "$usb_path" ]]; then
+        #     usb_path=$(echo "$device_info" | grep -i "DEVPATH" | cut -d= -f2 | head -n1)
+        # fi
+    fi
+    
+    
+    log_message "获取到信息: VID=$vid, PID=$pid, USB路径=$usb_path"
+    
+    # 组合新格式并写入输出文件
+    new_line="${display_name}|${touchscreen_name}|${vid}|${pid}|${usb_path}"
+    echo "$new_line" >> "$OUTPUT_FILE"
+    log_message "写入: $new_line"
+    
+done < "$INPUT_FILE"
+
+# 清空UOS的触摸屏设置信息
+if [ -f /usr/bin/gsettings ];then
+    gsettings set com.deepin.dde.display map-output ''> /dev/null 2>&1
+    if [ "$?" == "0" ];then
+        log_message "成功清除UOS系统设置中的触摸屏设置信息"
+    fi
+fi
+
+# 配置文件更新完成，进行一次试用
+log_message "开始进行触摸效果测试，并进行二次确认。"
+$workpath/screen_ds_once $tmppath/screen.txt
+$workpath/touch_set
+
+sleep 0.5
+
+# 试用后询问用户是否保存
+$workpath/check_save
+if [ ! "$?" = "0" ];then
+    # 用户点击了取消，恢复之前的设置
+    log_message 用户点击了取消，恢复之前的设置.
+    rm $workpath/config
+    mv $workpath/config.bk $workpath/config
+
+    # 最后写入0重新开启监控
+    echo -n "0" > $tmppath/setflag
+    
+    notify-send -u low --icon=view-fullscreen -t 15000  "取消保存，已恢复之前的配置。"
+else
+    log_message 用户点击了确认,新的config将会保存
+
+    # 最后写入0重新开启监控
+    echo -n "0" > $tmppath/setflag
+
+    log_message "处理完成，结果已保存到 $OUTPUT_FILE"
+    notify-send -u low --icon=view-fullscreen -t 15000  "触摸屏映射工具 ktouch" "设置完成，请稍等15秒查看效果。"
+fi
+
+    if [ -f $workpath/config.bk ];then
+        rm $workpath/config.bk
+    fi
+

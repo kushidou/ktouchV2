@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Icon=/usr/share/pixmaps/screen-config.png
+GenericName=ktouch-setup
+GenericName[zh_CN]=配置触摸映射
+Name=ConfigTouchMAP
+Name[zh_CN]=配置触摸映射
+Comment=Config MAP between Touch-devices and Screens
+Comment[zh_CN]=配置触摸设备和屏幕的映射关系
+Exec=/opt/ktouch/kscreen-setup

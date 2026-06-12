@@ -1,0 +1,8 @@
+Package: ktouch
+Version: 2.0
+Architecture: arm64
+Maintainer: Kushidou <kushidou@small09.top>
+Depends: xinput, python3
+Section: x11
+Priority: optional
+Description: 设置触摸屏仅需简单的点击屏幕.

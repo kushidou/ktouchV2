@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Icon=/usr/share/pixmaps/screen-remap.png
+GenericName=RemapTouchNOW
+GenericName[zh_CN]=映射触摸屏
+Name=RemapTouch
+Name[zh_CN]=映射触摸屏
+Comment=Remap Touch-Screens Now.
+Comment[zh_CN]=立即修复触摸紊乱
+Exec=/opt/ktouch/kscreen-remap

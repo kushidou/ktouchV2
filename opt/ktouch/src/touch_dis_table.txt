@@ -1,0 +1,2 @@
+HDMI-0|ILITEK Multi-Touch-V5000|1435117611|/dev/input/event10
+VGA-0|ILITEK ILITEK-TP|1435117617|/dev/input/event16

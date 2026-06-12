@@ -1,0 +1,64 @@
+#!/bin/bash
+# 搜集日志和配置文件，用于debug分析
+
+log_path="/opt/ktouch"
+now=$(date "+%m%d-%H%M%S")
+
+
+tdir="/tmp/klog_$now"
+
+mkdir $tdir && cd $tdir
+
+echo "正在收集日志文件，请注意需要输入sudo密码。"
+
+# cp /opt/ktouch/*log*    $tdir
+# cp /opt/ktouch/config   $tdir
+# cp /opt/ktouch/*.txt    $tdir
+
+
+# 采集系统信息
+export DISPLAY=:0
+xinput > $tdir/xinput_info.txt
+for id in $(xinput list --id-only); do
+    xinput --list-props "$id" >> $tdir/xinput_props.txt
+    echo -e "\n\n" $tdir/xinput_props.txt
+done
+xrandr > $tdir/xrandr_info.txt
+sudo dmidecode > $tdir/dmidecode.txt
+lsusb       >>  $tdir/lsusb.txt
+lsusb -t    >>  $tdir/lsusb.txt
+lsblk -f    >>  $tdir/lsblk.txt
+lspci       >>  $tdir/lspci.txt
+
+if [ -f /etc/kylin-release ]; then
+    cat /etc/os-release /etc/kylin-release 2>/dev/null >> $tdir/os-version.txt
+elif [ -f /etc/uos-release ]; then
+    cat /etc/os-release /etc/uos-release /etc/os-version  2>/dev/null >> $tdir/os-version.txt
+else
+    cat /etc/os-release 2>/dev/null >> $tdir/os-version.txt
+fi
+
+# 采集系统的日志
+sudo cp /var/log/messages*  $tdir >/dev/null 2>&1
+sudo cp /var/log/boot*  $tdir >/dev/null 2>&1
+sudo cp /var/log/kern*    $tdir >/dev/null 2>&1
+sudo cp /var/log/Xorg*      $tdir >/dev/null 2>&1
+sudo cp /var/log/syslog*    $tdir >/dev/null 2>&1
+
+
+# 将程序和日志整体打包
+sudo cp /etc/systemd/system/ktouch_daemon.service  $tdir/ktouch_daemon.service
+sudo chmod 777 -R $tdir
+cp  -r  /opt/ktouch  $tdir/ktouch
+
+
+ls -la ./        >> $tdir/fileinfo.txt
+ls -la ./ktouch  >> $tdir/fileinfo.txt
+
+# 打包
+echo "正在打包文件，将会生成在主目录/家目录/个人文件夹"
+
+cd /tmp
+tar -czf ~/ktouch_log-$now.tar.gz  ./klog_$now
+
+rm -rf /tmp/klog

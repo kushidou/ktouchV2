@@ -1,0 +1,70 @@
+#!/bin/sh
+
+APPDIR=/opt/ktouch/desktops
+AUTODIR=/etc/xdg/autostart
+MENUDIR=/usr/share/applications
+
+inslog_path="/opt/ktouch/install.log"
+
+BUILDDATE="2025年 09月 25日"
+KTVERSION="2.0"
+
+
+echo "==========REMOVE==========="  >> ${APPDIR}/install.log
+
+echo "=>即将移除ktouch v2">> ${inslog_path}
+echo "build date: $BUILDDATE" >> ${inslog_path}
+echo "ver: $KTVERSION" >> ${inslog_path}
+echo "remove_date: $(date)" >> ${inslog_path}
+
+
+
+# desktop
+for USERNAME in $(cat /etc/passwd | awk -F: '$3>=500' | cut -d : -f 1)
+do
+    [ -f /home/$USERNAME/Desktop/touchscreen-config.desktop ] && rm -f /home/$USERNAME/Desktop/touchscreen-config.desktop
+    [ -f /home/$USERNAME/Desktop/touchscreen-now.desktop ] && rm -f /home/$USERNAME/Desktop/touchscreen-now.desktop
+    [ -f /home/$USERNAME/桌面/touchscreen-config.desktop ] && rm -f /home/$USERNAME/桌面/touchscreen-config.desktop
+    [ -f /home/$USERNAME/桌面/touchscreen-now.desktop ] && rm -f /home/$USERNAME/桌面/touchscreen-now.desktop
+
+done
+
+# start menu
+rm $MENUDIR/touchscreen-config.desktop >/dev/null 2>&1
+rm $MENUDIR/touchscreen-now.desktop >/dev/null 2>&1
+
+
+# autostart
+rm /etc/xdg/autostart/touchscreen-auto.desktop >/dev/null 2>&1
+systemctl stop ktouch_daemon
+systemctl disable ktouch_daemon
+rm /etc/systemd/system/ktouch_daemon.service -f >/dev/null 2>&1
+systemctl daemon-reload
+
+#ICOS
+rm /usr/share/pixmaps/screen-config.png >/dev/null 2>&1
+rm /usr/share/pixmaps/screen-remap.png >/dev/null 2>&1
+
+#USR/BIN
+rm -f /usr/bin/kscreen-remap >/dev/null 2>&1
+rm -f /usr/bin/kscreen-setup >/dev/null 2>&1
+rm -f /usr/bin/kscreen-log   > dev/null 2>&1
+rm -f /usr/bin/kscreen-debug   > dev/null 2>&1
+rm -f /usr/bin/kscreen-remap-daemon > dev/null 2>&1
+rm -f /usr/bin/kdisplay > dev/null 2>&1
+
+# 解除禁用UOS自动触摸屏弹窗
+if [ -f /usr/lib/deepin-daemon/dde-touchscreen-dialog.disable ];then
+    mv /usr/lib/deepin-daemon/dde-touchscreen-dialog.disable /usr/lib/deepin-daemon/dde-touchscreen-dialog
+fi
+
+# 清空UOS的触摸屏设置信息
+if [ -f /usr/bin/gsettings ];then
+    gsettings set com.deepin.dde.display map-output '' > /dev/null 2>&1
+fi
+
+# 解除禁用麒麟V10触摸设置工具
+if [ -d /var/screen.disable ];then
+    mv /var/screen.disable /var/screen
+fi
+

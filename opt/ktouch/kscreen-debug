@@ -1,0 +1,170 @@
+#!/bin/bash
+
+get_touchdevice()
+{
+    # echo -n "" > $touchlist
+    for touch_id in $(xinput | grep -i -E 'touch|ILITEK|TSD' | cut -d '=' -f 2 | cut -f 1)
+    do
+        input_dev=$(xinput list-props $touch_id | grep "Device Node" | awk -F : '{print $2}' | awk -F \" '{print $2}' | awk '{print $1}')
+        touch_screen=$(udevadm info $input_dev | grep "ID_INPUT_TOUCHSCREEN")
+
+        # dev=$(udevadm info $input_dev | grep "ID_SERIAL=" | cut -d "=" -f 2)
+        dev=$(xinput list-props $touch_id | grep "Device '" | cut -d "'" -f 2)
+        vid_t=$(udevadm info $input_dev | grep "ID_VENDOR_ID=" | cut -d "=" -f 2)
+        pid_t=$(udevadm info $input_dev | grep "ID_MODEL_ID=" | cut -d "=" -f 2)
+        path_t=$(udevadm info $input_dev | grep "ID_PATH=" | cut -d "=" -f 2)
+        # echo "$vid_t,$pid_t,$path_t,$dev,$touch_id" 
+        echo "$dev"
+        echo "  输入设备id:$touch_id, 硬件id:$vid_t:$pid_t, 设备路径:$path_t"
+    done
+
+}
+
+
+get_screeninfo()
+{
+    xrandr | grep connected | grep -v disconnected | while read  -r screen ; do
+        # 提取显示器名称
+        name=$(echo $screen | awk '{print $1}')
+        
+        # 检查是否是主屏幕
+        if echo $screen | grep -q "primary"; then
+            primary="true"
+            # 主屏幕的信息在第4个字段
+            resolution=$(echo $screen | awk '{print $4}')
+        else
+            primary="false"
+            # 非主屏幕的信息在第3个字段
+            resolution=$(echo $screen | awk '{print $3}')
+        fi
+        
+        # 分离分辨率和坐标
+        screen_resolution=$(echo $resolution | cut -d'+' -f1)
+        screen_x=$(echo $resolution | cut -d'+' -f2)
+        screen_y=$(echo $resolution | cut -d'+' -f3)
+        
+        # 输出结果
+        echo "显示器名称: $name"
+        echo "分辨率: $screen_resolution"
+        echo "X坐标: $screen_x"
+        echo "Y坐标: $screen_y"
+        echo "主屏幕: $primary"
+        echo "---"
+    done 
+}
+
+
+show_help(){
+    echo  ktouch debug。输入字母可以执行对应的功能
+    echo "  h                     help，帮助"
+    echo "  q                     退出debug程序"
+    echo "  dev  [id]             查看触摸设备详细信息，比如  t 10  查看id=10的触摸设备详细信息"
+    echo "  map  [屏幕]  [id]     手动将对应id的设备校准到指定屏幕上，可能与系统设置冲突,需要重启才能恢复正常。"
+    echo "  log                   收集本工具的日志，生成到【主目录/家目录/个人文件夹】中"
+    echo "  setting               开始进行一次触摸屏校准设置，并在终端打印出详细日志，但是不会保存。"
+    echo "  automap               执行一次自动校准，并在终端打印出详细日志"
+    echo "  service  stop/start   停止或启动监控服务，包括其自启动也受影响"
+    echo "  fix                   修复程序，已经配置的信息会被删除"
+    echo "  "
+}
+
+map_to_output(){
+    xinput map-to-output $2 $1
+}
+
+show_dev_info(){
+    xinput list-props $1
+}
+
+service_control(){
+
+    if [ "$1" = "stop" ];then
+        sudo systemctl stop ktouch_daemon.service
+        sudo systemctl disable ktouch_daemon.service
+    elif [ "$1" = "start" ];then
+        sudo systemctl start ktouch_daemon.service
+        sudo systemctl enable ktouch_daemon.service
+    else
+        echo 参数不支持！
+    fi
+}
+
+
+
+echo "     ktouch 调试信息     "
+echo ============================
+echo "系统触摸屏、签字笔及其输入节点包括："
+get_touchdevice
+
+echo
+echo
+
+echo 系统显示器有：
+get_screeninfo
+echo 
+echo
+
+
+echo 当前的触摸屏映射配置为：
+cat /opt/ktouch/config
+echo
+echo
+
+show_help
+while [[ 1 ]]
+do
+    
+    echo -n "请输入命令: "
+
+    read CMD
+
+    if [ "$CMD" = "h" ];then
+        show_help
+
+    elif [ "$CMD" = "q" ];then
+        echo -n 0 > /tmp/ktouch/setflag
+        exit 0
+
+    elif [ "$(echo $CMD | cut -d' ' -f1)" = "dev" ];then
+        show_dev_info  $(echo $CMD | cut -d' ' -f2)
+
+    elif [ "$(echo $CMD | cut -d' ' -f1)" = "map" ];then
+        #进行一次映射，则需要停掉触摸监控，在程序结束后再打开
+        echo -n 1 > /tmp/ktouch/setflag
+        map_to_output  $(echo $CMD | cut -d' ' -f2) $(echo $CMD | cut -d' ' -f3)
+
+    elif [ "$CMD" = "log" ];then
+        kscreen-log
+
+    elif [ "$CMD" = "setting" ];then
+        /opt/ktouch/screen_binder
+
+    elif [ "$CMD" = "automap" ];then
+        kscreen-remap -s
+
+    elif [ "$(echo $CMD | cut -d' ' -f1)" = "service" ];then
+        echo "请注意输入sudo密码"
+        service_control $(echo $CMD | cut -d' ' -f2)
+        echo 完成，执行结果为 $?
+
+    elif [ "$CMD" = "fix" ];then
+        # 修复程序，流程为关闭程序监控，删除tmp，删除config，reconfigure一下，开启自启动
+        echo "请注意输入sudo密码"
+        service_control stop
+        rm -rf /tmp/ktouch
+        rm -f /opt/ktouch/config
+        sudo dpkg-reconfigure ktouch >/dev/null 2>&1
+        service_control start
+        echo 完成，执行结果为 $?
+
+
+    else
+        echo "命令有误，请输入 h 查看支持的命令。"
+    fi
+    echo
+
+
+
+
+done
+

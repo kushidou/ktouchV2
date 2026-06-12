@@ -1,0 +1,52 @@
+#!/bin/bash
+export DISPLAY=:0
+
+LOG_FILE=/opt/ktouch/touchscreen.log
+
+# 日志函数
+log_message() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') kscreen-remap : $1" | tee -a "$LOG_FILE"
+}
+
+log_message "用户($USER)手动执行映射" 
+
+# 清空UOS的触摸屏设置信息
+if [ -f /usr/bin/gsettings ];then
+    gsettings set com.deepin.dde.display map-output '' > /dev/null 2>&1
+    if [ "$?" == "0" ];then
+        echo "成功清除UOS系统设置中的触摸屏设置信息"
+    fi
+fi
+
+# 更新一次显示器信息
+if [ ! -d /tmp/ktouch ];then
+    mkdir -p /tmp/ktouch
+fi
+touch /tmp/ktouch/screen.txt
+/opt/ktouch/screen_ds_once /tmp/ktouch/screen.txt
+
+
+if [ ! -f "/opt/ktouch/config" ];then
+    # 配置文件不存在
+    log_message "配置文件不存在，不执行"
+    notify-send -u critical --icon=dialog-warning -t 9000  "触摸屏映射工具 ktouch" "配置文件不存在，请先进行配置！"
+    exit 1
+fi
+
+if [ "$1" == "" ];then
+    /opt/ktouch/touch_set
+    notify-send -u low --icon=view-fullscreen -t 3000  "触摸屏映射工具 ktouch" "映射操作完成，请点击屏幕检查。"
+    exit 0
+fi
+
+if [ "$1" == "-s" ];then
+    # 单次映射，用于开机自启动脚本保障使用。
+    log_message "$1 参数 = 单次执行"
+    /opt/ktouch/touch_set
+    exit 0
+fi
+
+echo "请不要携带任何参数执行。本次未作任何操作。"
+log_message "映射命令有参数传入($1), 忽略" 
+
+exit 127

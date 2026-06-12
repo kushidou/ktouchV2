@@ -1,0 +1,5 @@
+#!/bin/bash
+inslog_path="/var/log/ktouch/install.log"
+
+systemctl stop ktouch_daemon.service
+systemctl disable ktouch_daemon.service

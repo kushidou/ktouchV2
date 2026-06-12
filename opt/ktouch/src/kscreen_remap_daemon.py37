@@ -1,0 +1,350 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+import os
+import sys
+import time
+import logging
+import signal
+import hashlib
+import subprocess
+from pathlib import Path
+from threading import Thread
+from time import sleep
+
+# 配置X11环境变量
+os.environ['DISPLAY'] = ':0'
+# os.environ['XAUTHORITY'] = '/home/pi/.Xauthority'  # 根据实际情况调整路径
+
+# 全局变量
+processes = {}  # 存储进程对象
+monitor_thread = None  # 监控线程
+running = True  # 控制循环运行
+
+
+# 配置日志
+def setup_logging():
+    log_file = 'touchscreen.log'
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(log_file, encoding='utf-8'),
+            logging.StreamHandler(sys.stdout)
+        ]
+    )
+    return logging.getLogger(__name__)
+
+logger = setup_logging()
+
+# 信号处理函数
+def signal_handler(signum, frame):
+    global running
+    logger.info(f"Received signal {signum}, shutting down...")
+    running = False
+    cleanup()
+
+def cleanup():
+    """清理函数，停止所有子进程"""
+    logger.info("清理子进程")
+    for proc_name, proc_info in processes.items():
+        try:
+            proc = proc_info['process']
+            if proc and proc.poll() is None:  # 进程还在运行
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                logger.info(f"关闭了进程: {proc_name}")
+        except Exception as e:
+            logger.error(f"关闭进程失败 {proc_name}: {e}")
+    processes.clear()
+
+
+# 1. 日志文件轮转函数
+def rotate_logs():
+    log_files = ['screen_calibration.log', 'touchscreen.log']
+    max_size = 10 * 1024 * 1024  # 10MB
+    max_backups = 7
+    
+    for log_file in log_files:
+        if os.path.exists(log_file) and os.path.getsize(log_file) > max_size:
+            # 删除最旧的备份文件
+            oldest_backup = f"{log_file}.{max_backups}"
+            if os.path.exists(oldest_backup):
+                os.remove(oldest_backup)
+                logger.info(f"清理过早的日志: {oldest_backup}")
+            
+            # 重命名现有备份文件
+            for i in range(max_backups-1, 0, -1):
+                old_name = f"{log_file}.{i}"
+                new_name = f"{log_file}.{i+1}"
+                if os.path.exists(old_name):
+                    os.rename(old_name, new_name)
+                    # logger.info(f"Renamed {old_name} to {new_name}")
+            
+            # 重命名当前日志文件
+            os.rename(log_file, f"{log_file}.1")
+            # logger.info(f"Rotated log file: {log_file} -> {log_file}.1")
+
+# 2. 检查并创建所需文件
+def initialize_files():
+    ktouch_dir = Path("/tmp/ktouch")
+    files_to_create = [
+        "screen.txt",
+        "touch.txt",
+        "touch_need_update.txt",
+        "usbadd.txt"
+    ]
+    
+    # 创建目录
+    ktouch_dir.mkdir(exist_ok=True)
+    logger.info("创建状态缓存目录 /tmp/ktouch ")
+    
+    # 创建或初始化文件
+    for file_name in files_to_create:
+        file_path = ktouch_dir / file_name
+        with open(file_path, 'w') as f:
+            f.write('1')
+        logger.info(f"初始化缓存文件 {file_path}: to 1")
+
+
+# 启动单个后台程序
+def start_process(proc_name, proc_args):
+    """启动单个进程并添加到监控列表"""
+    # 设置X11环境
+    env = os.environ.copy()
+    env['DISPLAY'] = ':0'
+    
+    try:
+        proc = subprocess.Popen(proc_args, env=env)
+        processes[proc_name] = {
+            'process': proc,
+            'args': proc_args,
+            'start_time': time.time(),
+            'restart_count': 0
+        }
+        logger.info(f"拉起子进程 {proc_name} (PID: {proc.pid})")
+        return True
+    except Exception as e:
+        logger.error(f"进程启动失败 {proc_name}: {e}")
+        return False
+
+
+# 3. 启动后台程序（添加X11环境支持）
+def start_background_processes():
+    process_configs = {
+        'screen_ds': ["/opt/ktouch/screen_ds", "/tmp/ktouch/screen.txt"],
+        'touch_ds': ["/opt/ktouch/touch_ds", "/tmp/ktouch/touchmap.txt", "/tmp/ktouch/touch_need_update.txt"],
+        'usb_ds': ["/opt/ktouch/usb_ds", "/tmp/ktouch/usbadd.txt"]
+    }
+
+    for proc_name, proc_args in process_configs.items():
+        start_process(proc_name, proc_args)
+    
+    # # 设置X11环境
+    # env = os.environ.copy()
+    # env['DISPLAY'] = ':0'
+    
+    # for proc_args in processes:
+    #     try:
+    #         subprocess.Popen(proc_args, env=env)
+    #         logger.info(f"Started process: {' '.join(proc_args)}")
+    #     except Exception as e:
+    #         logger.error(f"Failed to start process {proc_args[0]}: {e}")
+
+# 监控和重启进程
+def monitor_processes():
+    """监控进程状态，如果进程退出则重启"""
+    global running
+    
+    while running:
+        try:
+            for proc_name, proc_info in list(processes.items()):
+                proc = proc_info['process']
+                returncode = proc.poll()
+                
+                if returncode is not None:  # 进程已退出
+                    logger.warning(f"进程 {proc_name} (PID: {proc.pid}) 已退出，代码 {returncode}")
+                    
+                    # 限制重启次数，避免无限重启
+                    proc_info['restart_count'] += 1
+                    if proc_info['restart_count'] > 128:  # 最多重启128次
+                        logger.error(f"启动 {proc_name} 进程被结束超过128次，决定不再重启。请检查日志文件。")
+                        del processes[proc_name]
+                        continue
+                    
+                    # 等待一段时间再重启
+                    time.sleep(2)
+                    
+                    # 重新启动进程
+                    if start_process(proc_name, proc_info['args']):
+                        logger.info(f"重启进程: {proc_name}")
+                    else:
+                        logger.error(f"重启进程失败: {proc_name}")
+            
+            # 检查是否有进程需要启动（初始启动失败的情况）
+            expected_processes = ['screen_ds', 'touch_ds', 'usb_ds']
+            for proc_name in expected_processes:
+                if proc_name not in processes:
+                    logger.warning(f"发现 {proc_name} 消失, 准备重新启动")
+                    # 这里需要根据进程名重新构建参数
+                    if proc_name == 'screen_ds':
+                        start_process(proc_name, ["/opt/ktouch/screen_ds", "/tmp/ktouch/screen.txt"])
+                    elif proc_name == 'touch_ds':
+                        start_process(proc_name, ["/opt/ktouch/touch_ds", "/tmp/ktouch/touchmap.txt", "/tmp/ktouch/touch_need_update.txt"])
+                    elif proc_name == 'usb_ds':
+                        start_process(proc_name, ["/opt/ktouch/usb_ds", "/tmp/ktouch/usbadd.txt"])
+            
+            time.sleep(5)  # 每2秒检查一次进程状态
+            
+        except Exception as e:
+            logger.error(f"进程监控出现问题: {e}")
+            time.sleep(5)
+
+
+# 4. 执行touch_remap并重置文件（添加X11环境支持）
+def run_touch_remap():
+    # 设置X11环境
+    env = os.environ.copy()
+    env['DISPLAY'] = ':0'
+    
+    try:
+        # 执行touch_remap程序
+        result = subprocess.run(["/opt/ktouch/touch_set", "/tmp/ktouch/touch.txt"], capture_output=True, text=True, env=env)
+        if result.returncode == 0:
+            logger.info("执行映射(touch_set)成功")
+        else:
+            logger.error(f"执行映射(touch_set)失败，错误信息为 {result.returncode}: {result.stderr}")
+    except Exception as e:
+        logger.error(f"无法执行touch_set映射程序！！！！！: {e}")
+    
+    # 重置文件为0
+    ktouch_dir = Path("/tmp/ktouch")
+    files_to_reset = [
+        "touch_need_update.txt",
+        "usbadd.txt"
+    ]
+    
+    for file_name in files_to_reset:
+        file_path = ktouch_dir / file_name
+        try:
+            with open(file_path, 'w') as f:
+                f.write('0')
+            # logger.info(f"Reset {file_path} to 0")
+        except Exception as e:
+            # logger.error(f"Failed to reset {file_path}: {e}")
+
+# 5. 监控文件变化
+def monitor_files():
+    # 记录screen.txt的初始状态
+    screen_file = "/tmp/ktouch/screen.txt"
+    last_screen_content = ""
+    
+    if os.path.exists(screen_file):
+        with open(screen_file, 'r') as f:
+            last_screen_content = f.read().strip()
+    
+    logger.info("开始主程序监控")
+    
+    while running:
+        # 检查是否需要执行touch_remap
+        need_update = False
+        
+        # 检查usbadd.txt和touch_need_update.txt
+        for file_name in ["/tmp/ktouch/usbadd.txt", "/tmp/ktouch/touch_need_update.txt"]:
+            try:
+                with open(file_name, 'r') as f:
+                    content = f.read().strip()
+                    if content == '1':
+                        logger.info(f"文件 {file_name} 内容变为1，触发重映射")
+                        need_update = True
+            except Exception as e:
+                logger.error(f"读取文件失败 {file_name}: {e}")
+        
+        # 检查screen.txt是否发生变化
+        try:
+            with open(screen_file, 'r') as f:
+                current_content = f.read().strip()
+                if current_content != last_screen_content:
+                    logger.info("文件 screen.txt 内容变化，触发重映射")
+                    need_update = True
+                    last_screen_content = current_content
+        except Exception as e:
+            logger.error(f"读取文件失败 {screen_file}: {e}")
+        
+        # 如果需要更新，执行touch_remap
+        if need_update:
+            run_touch_remap()
+        
+        # 等待一段时间再次检查
+        time.sleep(1)
+
+# 检查X11环境是否可用
+def check_x11_environment():
+    try:
+        # 尝试运行一个简单的X11命令来检查环境
+        result = subprocess.run(['xset', '-q'], capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            logger.info("X11 environment is available")
+            return True
+        else:
+            logger.warning("X11 environment check failed")
+            return False
+    except Exception as e:
+        logger.error(f"Error checking X11 environment: {e}")
+        return False
+
+# 主函数
+def main():
+    global monitor_thread, running
+    try:
+        # 注册信号处理
+        signal.signal(signal.SIGTERM, signal_handler)
+        signal.signal(signal.SIGINT, signal_handler)
+        logger.info("kscreen_remap_daemon 程序启动")
+        
+        # 检查X11环境
+        if not check_x11_environment():
+            logger.warning("主程序：X11 environment may not be available, 程序将继续运行但无效果")
+        
+        # 1. 日志轮转
+        rotate_logs()
+        logger.info("主程序：处理日志 OK")
+        
+        # 2. 初始化文件
+        initialize_files()
+        logger.info("主程序：初始化和检查文件 OK")
+        
+        # 3. 启动后台进程
+        start_background_processes()
+        logger.info("主程序：启动子进程 OK")
+
+        # 启动进程监控线程
+        monitor_thread = Thread(target=monitor_processes, daemon=True)
+        monitor_thread.start()
+        logger.info("主程序：启动进程监控 OK")
+        
+        sleep(3)
+        # 4. 首次执行touch_remap
+        run_touch_remap()
+        logger.info("主程序：执行一次映射 OK")
+        
+        sleep(7)
+        # 5. 开始监控文件变化
+        logger.info("主程序：开始监控loop")
+        monitor_files()
+        
+        
+    except Exception as e:
+        logger.error(f"Unexpected error in main: {e}")
+        running = False
+        cleanup()
+        sys.exit(1)
+    finally:
+        cleanup()
+        logger.info("Daemon script stopped")
+
+if __name__ == "__main__":
+    main()

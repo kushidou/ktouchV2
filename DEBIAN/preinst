@@ -1,0 +1,58 @@
+#!/bin/bash
+
+# 2024.05.28 决定将kushidoutouch全部切换到ktouch，这个脚本用于切换。
+# 2025.09.09 ktouch V2基本开发完成，不再需要原来的目录
+
+KTVERSION="2.0"
+MYDIR=/opt/ktouch
+APPDIR=$MYDIR/desktops
+AUTODIR=/etc/xdg/autostart
+MENUDIR=/usr/share/applications
+BINDIR=/usr/bin
+log_path="/var/log/ktouch/touchscreen.log"
+inslog_path="/var/log/ktouch/install.log"
+
+
+# start menu
+if [ -f ${MENUDIR}/touchscreen-config.desktop ];then
+    rm -f ${MENUDIR}/touchscreen-config.desktop >/dev/null 2>&1
+fi
+
+if [ -f ${MENUDIR}/touchscreen-now.desktop ];then
+    rm -f ${MENUDIR}/touchscreen-now.desktop >/dev/null 2>&1
+fi
+
+
+
+# desktop
+for USERNAME in $(cat /etc/passwd | awk -F: '$3>=500' | cut -d : -f 1)
+do
+    if [ -d "/home/${USERNAME}/Desktop" ];then
+        if [ -f /home/${USERNAME}/Desktop/touchscreen-config.desktop ];then
+            rm -f /home/${USERNAME}/Desktop/touchscreen-config.desktop
+        fi
+        if [ -f /home/${USERNAME}/Desktop/touchscreen-now.desktop ];then
+            rm -f /home/${USERNAME}/Desktop/touchscreen-now.desktop
+        fi
+
+    fi
+    if [ -d "/home/${USERNAME}/桌面" ];then
+        if [ -f /home/${USERNAME}/桌面/touchscreen-config.desktop ];then
+            rm -f /home/${USERNAME}/桌面/touchscreen-config.desktop
+        fi
+        if [ -f /home/${USERNAME}/桌面/touchscreen-now.desktop ];then
+            rm -f /home/${USERNAME}/桌面/touchscreen-now.desktop
+        fi
+    fi
+done
+
+# autostart
+rm $AUTODIR/touchscreen-autoremap.desktop >/dev/null 2>&1
+rm $AUTODIR/touchscreen-powerup.desktop >/dev/null 2>&1
+
+#USR/BIN
+rm -f /usr/bin/kscreen-remap >/dev/null 2>&1
+rm -f /usr/bin/kscreen-setup >/dev/null 2>&1
+rm -f /usr/bin/kscreen-log   > dev/null 2>&1
+
+

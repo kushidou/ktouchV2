@@ -1,0 +1,136 @@
+#!/bin/sh
+
+BUILDDATE="2025年 09月 25日"
+KTVERSION="2.0"
+MYDIR=/opt/ktouch
+APPDIR=$MYDIR/desktops
+# AUTODIR=/etc/xdg/autostart
+MENUDIR=/usr/share/applications
+BINDIR=/usr/bin
+log_path=${MYDIR}
+inslog_path=${MYDIR}/install.log
+
+LOGINUSER=$(whoami)
+NUSER=${SUDO_USER}
+
+
+
+set_autostart()
+{
+    SUSER=$NUSER
+    if [ "$NUSER" = "" ];then
+        echo "注意！用户是空，应该使用sudo  dpkg 来安装。"
+        echo "用户名为[$SUSER], 免root操作触摸屏和开机自启动都不能正常工作。" >> $log_path
+        SUSER="1000"
+    fi
+
+
+    # 生成服务文件内容
+    SERVICE_CONTENT="[Unit]
+    Description=Kushidou Touchscreen Remap Daemon
+    After=display-manager.service
+    Requires=display-manager.service
+
+    [Service]
+    Type=simple
+    User=$SUSER
+    Group=$SUSER
+    Environment=DISPLAY=:0
+    #Environment=XAUTHORITY=/home/$NUSER/.Xauthority
+    ExecStart=/usr/bin/python3 /opt/ktouch/kscreen-remap-daemon
+    Restart=always
+    RestartSec=5
+    StartLimitInterval=0
+
+    [Install]
+    WantedBy=graphical.target"
+
+    # 写入服务文件
+    SERVICE_FILE="/etc/systemd/system/ktouch_daemon.service"
+    echo "$SERVICE_CONTENT" > "$SERVICE_FILE" || {
+        echo "写入服务文件失败: $SERVICE_FILE"
+        exit 1
+    }
+
+    # 重新加载systemd配置
+    systemctl daemon-reload || {
+        echo "重新加载systemd配置失败。"
+        exit 1
+    }
+
+    # 启用服务自启动
+    systemctl enable ktouch_daemon.service || {
+        echo "启用服务自启动失败。"
+        exit 1
+    }
+
+    # 开启服务
+    systemctl start ktouch_daemon.service || {
+        echo "启用服务失败。"
+        exit 1
+    }
+
+    echo "服务已成功配置并启动。"
+}
+
+
+
+
+echo "==========INSTALL==========="  >> ${APPDIR}/install.log
+
+echo "=>即将安装触摸屏设置软件ktouch v2">> ${inslog_path}
+echo "build date: $BUILDDATE" >> ${inslog_path}
+echo "ver: $KTVERSION" >> ${inslog_path}
+echo "install: $(date)" >> ${inslog_path}
+# start menu
+install -p -m 0755 -o root -g root ${APPDIR}/touchscreen-config.desktop ${MENUDIR}
+install -p -m 0755 -o root -g root ${APPDIR}/touchscreen-now.desktop ${MENUDIR}
+
+install -p -m 0755 -o root -g root ${APPDIR}/touchscreen-auto.desktop /etc/xdg/autostart
+
+
+#ICOS
+cp ${APPDIR}/*.png /usr/share/pixmaps/
+
+#USR/BIN
+if [ -f ${BINDIR}/kscreen-remap ];then
+    rm -f ${BINDIR}/kscreen-remap
+fi
+if [ -f ${BINDIR}/kscreen-remap ];then
+    rm -f ${BINDIR}/kscreen-kscreen-remap-daemon
+fi
+if [ -f ${BINDIR}/kscreen-remap ];then
+    rm -f ${BINDIR}/kscreen-setup
+fi
+if [ -f ${BINDIR}/kscreen-remap ];then
+    rm -f ${BINDIR}/kscreen-log
+fi
+
+ln -s /opt/ktouch/kscreen-remap /usr/bin/kscreen-remap
+ln -s /opt/ktouch/kscreen-remap-daemon /usr/bin/kscreen-remap-daemon
+ln -s /opt/ktouch/kscreen-setup /usr/bin/kscreen-setup
+ln -s /opt/ktouch/kscreen-log   /usr/bin/kscreen-log
+ln -s /opt/ktouch/kscreen-debug   /usr/bin/kscreen-debug
+ln -s /opt/ktouch/kdisplay   /usr/bin/kdisplay
+
+chmod 0777 /opt/ktouch/* -R
+
+# 将用户加入input组
+usermod -a -G input $NUSER
+usermod -a -G dialout $NUSER
+
+# 设置自启动
+set_autostart
+
+# 禁用UOS自动触摸屏弹窗
+if [ -f /usr/lib/deepin-daemon/dde-touchscreen-dialog ];then
+    mv /usr/lib/deepin-daemon/dde-touchscreen-dialog /usr/lib/deepin-daemon/dde-touchscreen-dialog.disable
+fi
+
+# 禁用麒麟V10触摸设置工具
+if [ -d /var/screen ];then
+    mv /var/screen /var/screen.disable
+fi
+
+echo  "安装已经完成。如果是首次安装，请重启电脑，否则无法打开触摸屏设备"
+

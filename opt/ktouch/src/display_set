@@ -1,0 +1,535 @@
+#!/usr/bin/env python3
+"""
+显示器配置检查与设置脚本
+环境变量: DISPLAY=:0
+参数: 配置文件路径
+配置文件格式: 分辨率@刷新率|坐标|旋转方向|是否是主屏
+示例: 1920x1080@60.0Hz|0,0|1|P
+功能: 检查当前分辨率是否与配置文件一致，否则进行设置
+"""
+
+import os
+import sys
+import re
+import subprocess
+import argparse
+from pathlib import Path
+
+class DisplayChecker:
+    def __init__(self, display_env=":0"):
+        """初始化显示器检查器"""
+        self.display_env = display_env
+        self.display_name = None
+        self.config_data = None
+        self.current_settings = None
+        
+    def parse_config_file(self, config_path):
+        """
+        解析配置文件
+        格式: 分辨率@刷新率|坐标|旋转方向|是否是主屏
+        示例: 1920x1080@60.0Hz|0,0|1|P
+        """
+        try:
+            with open(config_path, 'r') as f:
+                content = f.read().strip()
+            
+            # 从文件名获取显示器名称（去掉后缀）
+            self.display_name = Path(config_path).stem
+            
+            # 解析配置内容
+            parts = content.split('|')
+            if len(parts) != 4:
+                raise ValueError("配置文件格式错误，应该有4个部分")
+            
+            # 解析分辨率和刷新率
+            res_refresh_match = re.match(r'(\d+)x(\d+)@([\d.]+)Hz', parts[0])
+            if not res_refresh_match:
+                raise ValueError("分辨率刷新率格式错误")
+            
+            width, height, refresh_rate = res_refresh_match.groups()
+            
+            # 解析坐标
+            pos_match = re.match(r'(-?\d+),(-?\d+)', parts[1])
+            if not pos_match:
+                raise ValueError("坐标格式错误")
+            
+            pos_x, pos_y = pos_match.groups()
+            
+            # 解析旋转方向
+            rotation_map = {'1': 'normal', '2': 'left', '4': 'inverted', '8': 'right'}
+            rotation = rotation_map.get(parts[2])
+            if not rotation:
+                raise ValueError(f"旋转方向错误: {parts[2]}")
+            
+            # 解析主屏设置
+            primary = parts[3] == 'P'
+            
+            self.config_data = {
+                'width': int(width),
+                'height': int(height),
+                'refresh_rate': float(refresh_rate),
+                'pos_x': int(pos_x),
+                'pos_y': int(pos_y),
+                'rotation': rotation,
+                'primary': primary
+            }
+            
+            return True
+            
+        except Exception as e:
+            print(f"解析配置文件错误: {e}")
+            return False
+    
+    def run_xrandr_command(self, cmd, ignore_errors=False):
+        """运行xrandr命令"""
+        env = os.environ.copy()
+        env['DISPLAY'] = self.display_env
+        
+        try:
+            result = subprocess.run(cmd, shell=True, env=env, capture_output=True, text=True)
+            if result.returncode != 0:
+                if ignore_errors:
+                    # 检查是否是"已经存在"之类的错误
+                    error_lower = result.stderr.lower()
+                    if any(keyword in error_lower for keyword in ['already exists', 'already set', 'exist']):
+                        print(f"忽略预期中的错误: {result.stderr.strip()}")
+                        return True
+                    else:
+                        print(f"命令执行失败但忽略错误: {cmd}")
+                        print(f"错误信息: {result.stderr}")
+                        return True
+                else:
+                    print(f"命令执行失败: {cmd}")
+                    print(f"错误信息: {result.stderr}")
+                    return False
+            return True
+        except Exception as e:
+            print(f"执行命令错误: {e}")
+            return False
+    
+    def get_current_display_settings(self):
+        """获取当前显示器的设置"""
+        env = os.environ.copy()
+        env['DISPLAY'] = self.display_env
+        
+        try:
+            result = subprocess.run(
+                ['xrandr'], 
+                env=env, 
+                capture_output=True, 
+                text=True
+            )
+            
+            if result.returncode != 0:
+                print("获取显示器信息失败")
+                return None
+            
+            # 解析xrandr输出，找到指定显示器的当前设置
+            lines = result.stdout.split('\n')
+            current_settings = {}
+            
+            for line in lines:
+                # 查找目标显示器的连接状态行
+                if line.startswith(f'{self.display_name} '):
+                    # 示例: "HDMI-1 connected primary 1920x1080+0+0 (normal left inverted right x axis y axis) 527mm x 296mm"
+                    # 或者: "HDMI-1 connected 1920x1080+0+0"
+                    
+                    # 检查是否是主屏
+                    current_settings['primary'] = 'primary' in line
+                    
+                    # 提取当前分辨率
+                    res_match = re.search(r'(\d+x\d+)\+(-?\d+)\+(-?\d+)', line)
+                    if res_match:
+                        current_settings['resolution'] = res_match.group(1)
+                        current_settings['pos_x'] = int(res_match.group(2))
+                        current_settings['pos_y'] = int(res_match.group(3))
+                    
+                    # 提取旋转信息
+                    if 'inverted' in line and 'x axis y axis' not in line:
+                        current_settings['rotation'] = 'inverted'
+                    elif 'left' in line and 'x axis y axis' not in line:
+                        current_settings['rotation'] = 'left'
+                    elif 'right' in line and 'x axis y axis' not in line:
+                        current_settings['rotation'] = 'right'
+                    else:
+                        current_settings['rotation'] = 'normal'
+                    
+                    # 继续查找当前模式行以获取刷新率
+                    for next_line in lines[lines.index(line)+1:]:
+                        if next_line.strip() and not next_line.startswith(' '):
+                            break
+                        
+                        # 查找当前模式（带*的）
+                        if '*'+'+' in next_line or '* ' in next_line:
+                            rate_match = re.search(r'(\d+\.\d+)\*', next_line)
+                            if rate_match:
+                                current_settings['refresh_rate'] = float(rate_match.group(1))
+                            break
+            
+            self.current_settings = current_settings
+            return current_settings
+            
+        except Exception as e:
+            print(f"获取当前显示器设置错误: {e}")
+            return None
+    
+    def get_display_modes(self):
+        """
+        获取显示器支持的模式列表
+        返回: 字典，键为分辨率，值为该分辨率下支持的刷新率列表
+        """
+        env = os.environ.copy()
+        env['DISPLAY'] = self.display_env
+        
+        try:
+            result = subprocess.run(
+                ['xrandr'], 
+                env=env, 
+                capture_output=True, 
+                text=True
+            )
+            
+            if result.returncode != 0:
+                print("获取显示器信息失败")
+                return {}
+            
+            # 解析xrandr输出，找到指定显示器的模式
+            lines = result.stdout.split('\n')
+            modes = {}
+            in_target_display = False
+            current_resolution = None
+            
+            for line in lines:
+                # 检查是否进入目标显示器的部分
+                if line.startswith(f'{self.display_name} '):
+                    in_target_display = True
+                    continue
+                elif in_target_display and line.strip() and not line.startswith(' '):
+                    # 新的显示器部分开始，退出
+                    break
+                
+                if in_target_display:
+                    # 解析分辨率行，例如: "1920x1080" 或 "1280x720i" (隔行扫描)
+                    res_match = re.search(r'^\s*(\d+x\d+i?)\s+', line)
+                    if res_match:
+                        current_resolution = res_match.group(1)
+                        modes[current_resolution] = []
+                    
+                    # 解析刷新率，例如: "60.00*+", "59.94", "50.00"
+                    if current_resolution:
+                        rate_matches = re.findall(r'(\d+\.\d+)\*?\+?', line)
+                        for rate in rate_matches:
+                            modes[current_resolution].append(float(rate))
+            
+            return modes
+            
+        except Exception as e:
+            print(f"获取显示器模式错误: {e}")
+            return {}
+    
+    def get_existing_modelines(self):
+        """获取已经存在的自定义模式"""
+        env = os.environ.copy()
+        env['DISPLAY'] = self.display_env
+        
+        try:
+            result = subprocess.run(
+                ['xrandr'], 
+                env=env, 
+                capture_output=True, 
+                text=True
+            )
+            
+            if result.returncode != 0:
+                return []
+            
+            # 查找自定义模式（通常在输出顶部）
+            lines = result.stdout.split('\n')
+            modelines = []
+            capturing_modelines = True
+            
+            for line in lines:
+                # 当遇到第一个显示器输出时停止捕获
+                if re.match(r'^\S+ connected', line):
+                    capturing_modelines = False
+                    continue
+                
+                if capturing_modelines and line.strip():
+                    # 模式行通常包含分辨率
+                    mode_match = re.match(r'^\s*(\S+)\s+.*?(\d+\.\d+)\s+.*?(\d+)\s+.*?(\d+)\s+.*?(\d+)\s+.*?(\d+)\s+.*?(\d+)\s+.*?(\d+)\s+.*?(\d+)', line)
+                    if mode_match:
+                        modelines.append(mode_match.group(1))
+            
+            return modelines
+            
+        except Exception as e:
+            print(f"获取已存在模式错误: {e}")
+            return []
+    
+    def find_matching_mode(self, modes):
+        """在支持的模式中查找匹配的模式（允许刷新率误差）"""
+        target_res = f"{self.config_data['width']}x{self.config_data['height']}"
+        target_refresh = self.config_data['refresh_rate']
+        
+        # 检查精确匹配的分辨率
+        if target_res in modes:
+            for refresh_rate in modes[target_res]:
+                # 允许±2fps的误差
+                if abs(refresh_rate - target_refresh) <= 2.0:
+                    return f"{target_res} {refresh_rate}"
+        
+        # 检查隔行扫描变体（如果有）
+        interlaced_res = f"{target_res}i"
+        if interlaced_res in modes:
+            for refresh_rate in modes[interlaced_res]:
+                # 允许±2fps的误差
+                if abs(refresh_rate - target_refresh) <= 2.0:
+                    return f"{interlaced_res} {refresh_rate}"
+        
+        return None
+    
+    def create_and_add_mode(self):
+        """使用cvt创建并添加新的显示模式"""
+        width = self.config_data['width']
+        height = self.config_data['height']
+        refresh_rate = self.config_data['refresh_rate']
+        
+        # 生成模式名称
+        mode_name = f"{width}x{height}_{refresh_rate}"
+        
+        # 检查模式是否已经存在
+        existing_modelines = self.get_existing_modelines()
+        if mode_name in existing_modelines:
+            print(f"模式 {mode_name} 已经存在，跳过创建")
+        else:
+            # 使用cvt生成模式行
+            try:
+                # 运行cvt命令
+                result = subprocess.run(
+                    ['cvt', str(width), str(height), str(refresh_rate)], 
+                    capture_output=True, 
+                    text=True
+                )
+                
+                if result.returncode != 0:
+                    print("cvt命令执行失败")
+                    return None
+                
+                # 从cvt输出中提取模式行
+                lines = result.stdout.split('\n')
+                modeline = None
+                for line in lines:
+                    if line.startswith('Modeline '):
+                        modeline = line.replace('Modeline ', '').strip()
+                        break
+                
+                if not modeline:
+                    print("无法从cvt输出中提取模式行")
+                    return None
+                
+                # 添加新模式（忽略已存在的错误）
+                add_mode_cmd = f"xrandr --newmode {mode_name} {modeline.split(' ', 1)[1]}"
+                if not self.run_xrandr_command(add_mode_cmd, ignore_errors=True):
+                    return None
+                print(f"成功创建新模式: {mode_name}")
+                
+            except Exception as e:
+                print(f"创建模式错误: {e}")
+                return None
+        
+        # 将新模式添加到显示器（忽略已添加的错误）
+        add_to_output_cmd = f"xrandr --addmode {self.display_name} {mode_name}"
+        if not self.run_xrandr_command(add_to_output_cmd, ignore_errors=True):
+            return None
+        
+        return mode_name
+    
+    def parse_resolution(self, resolution_str):
+        """解析分辨率字符串，返回宽高元组"""
+        try:
+            if 'x' in resolution_str:
+                width, height = resolution_str.split('x')
+                # 处理隔行扫描（如1080i）
+                height = height.replace('i', '')
+                return int(width), int(height)
+            return 0, 0
+        except:
+            return 0, 0
+    
+    def compare_settings(self):
+        """比较当前设置与配置设置"""
+        if not self.current_settings or not self.config_data:
+            return False, "无法获取当前设置或配置数据"
+        
+        # 检查分辨率（允许±10像素误差）
+        current_res = self.current_settings.get('resolution', '')
+        current_width, current_height = self.parse_resolution(current_res)
+        target_width = self.config_data['width']
+        target_height = self.config_data['height']
+        
+        width_diff = abs(current_width - target_width)
+        height_diff = abs(current_height - target_height)
+        
+        if width_diff > 10 or height_diff > 10:
+            return False, f"分辨率不匹配: 当前 {current_res} ({width_diff}, {height_diff} 像素差异), 配置 {target_width}x{target_height}"
+        
+        # 检查刷新率（允许±2fps误差）
+        current_refresh = self.current_settings.get('refresh_rate', 0)
+        target_refresh = self.config_data['refresh_rate']
+        refresh_diff = abs(current_refresh - target_refresh)
+        
+        if refresh_diff > 2.0:
+            return False, f"刷新率不匹配: 当前 {current_refresh:.1f}Hz ({refresh_diff:.1f}Hz 差异), 配置 {target_refresh:.1f}Hz"
+        
+        # 检查旋转（必须精确匹配）
+        current_rotation = self.current_settings.get('rotation', 'normal')
+        if current_rotation != self.config_data['rotation']:
+            return False, f"旋转不匹配: 当前 {current_rotation}, 配置 {self.config_data['rotation']}"
+        
+        # 检查主屏设置（必须精确匹配）
+        current_primary = self.current_settings.get('primary', False)
+        if current_primary != self.config_data['primary']:
+            primary_status_current = "是" if current_primary else "否"
+            primary_status_target = "是" if self.config_data['primary'] else "否"
+            return False, f"主屏设置不匹配: 当前 {primary_status_current}, 配置 {primary_status_target}"
+        
+        # 位置不进行校验（根据要求）
+        
+        # 生成详细的匹配信息
+        match_details = []
+        if width_diff > 0 or height_diff > 0:
+            match_details.append(f"分辨率: {current_res} (差异: {width_diff}x{height_diff} 像素)")
+        else:
+            match_details.append(f"分辨率: {current_res} (精确匹配)")
+        
+        if refresh_diff > 0:
+            match_details.append(f"刷新率: {current_refresh:.1f}Hz (差异: {refresh_diff:.1f}Hz)")
+        else:
+            match_details.append(f"刷新率: {current_refresh:.1f}Hz (精确匹配)")
+        
+        match_details.append(f"旋转: {current_rotation}")
+        match_details.append(f"主屏: {'是' if current_primary else '否'}")
+        match_details.append("位置: 跳过校验")
+        
+        return True, " | ".join(match_details)
+    
+    def configure_display(self):
+        """配置显示器"""
+        if not self.config_data:
+            print("没有可用的配置数据")
+            return False
+        
+        # 获取当前支持的模式
+        modes = self.get_display_modes()
+        if not modes:
+            print(f"无法获取显示器 {self.display_name} 的模式信息")
+            return False
+        
+        print(f"显示器 {self.display_name} 支持的模式:")
+        for res, rates in modes.items():
+            print(f"  {res}: {rates}")
+        
+        # 查找匹配的模式
+        mode_name = self.find_matching_mode(modes)
+        
+        # 如果不支持，创建新模式
+        if not mode_name:
+            print("显示器不支持该模式，尝试创建新模式...")
+            mode_name = self.create_and_add_mode()
+            if not mode_name:
+                print("创建新模式失败")
+                return False
+        else:
+            print(f"找到匹配模式: {mode_name}")
+        
+        # 构建xrandr命令
+        cmd_parts = ["xrandr", f"--output {self.display_name}"]
+        
+        # 添加模式
+        if ' ' in mode_name:
+            resolution, rate = mode_name.split(' ', 1)
+            cmd_parts.append(f"--mode {resolution}")
+            cmd_parts.append(f"--rate {rate}")
+        else:
+            # 自定义模式
+            cmd_parts.append(f"--mode {mode_name}")
+        
+        # 添加位置（即使不校验也设置）
+        cmd_parts.append(f"--pos {self.config_data['pos_x']}x{self.config_data['pos_y']}")
+        
+        # 添加旋转
+        cmd_parts.append(f"--rotate {self.config_data['rotation']}")
+        
+        # 如果是主屏
+        if self.config_data['primary']:
+            cmd_parts.append("--primary")
+        
+        # 启用显示器
+        cmd_parts.append("--auto")
+        
+        # 执行最终配置命令
+        final_cmd = " ".join(cmd_parts)
+        print(f"执行命令: {final_cmd}")
+        
+        if self.run_xrandr_command(final_cmd):
+            print("显示器配置成功!")
+            return True
+        else:
+            print("显示器配置失败!")
+            return False
+    
+    def check_and_configure(self):
+        """检查并配置显示器"""
+        # 获取当前设置
+        current_settings = self.get_current_display_settings()
+        if not current_settings:
+            print("无法获取当前显示器设置，尝试直接配置...")
+            return self.configure_display()
+        
+        print("当前显示器设置:")
+        for key, value in current_settings.items():
+            print(f"  {key}: {value}")
+        
+        # 比较设置
+        match, message = self.compare_settings()
+        
+        if match:
+            print(f"✓ 设置匹配: {message}")
+            return True
+        else:
+            print(f"✗ 设置不匹配: {message}")
+            print("开始配置显示器...")
+            return self.configure_display()
+
+def main():
+    """主函数"""
+    # 检查DISPLAY环境变量
+    if 'DISPLAY' not in os.environ:
+        os.environ['DISPLAY'] = ':0'
+        print("设置DISPLAY环境变量为:0")
+    
+    # 解析命令行参数
+    parser = argparse.ArgumentParser(description='显示器配置检查与设置脚本')
+    parser.add_argument('config_file', help='配置文件路径')
+    args = parser.parse_args()
+    
+    # 检查配置文件是否存在
+    if not os.path.exists(args.config_file):
+        print(f"配置文件不存在: {args.config_file}")
+        sys.exit(1)
+    
+    # 创建检查器并执行检查与配置
+    checker = DisplayChecker()
+    
+    if checker.parse_config_file(args.config_file):
+        if checker.check_and_configure():
+            print("显示器检查与配置完成")
+            sys.exit(0)
+        else:
+            print("显示器检查与配置失败")
+            sys.exit(1)
+    else:
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
