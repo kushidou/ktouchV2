@@ -172,18 +172,13 @@ fi
 # ============================================
 #  4. 程序本体  ───  program/
 # ============================================
-echo "  采集程序文件清单..."
+echo "  采集程序本体..."
 
-# 文件列表（不复制整个目录，只记录清单 + md5）
-find /opt/ktouch -type f 2>/dev/null | sort > "$DIR_PROGRAM/file_list.txt"
+# 完整拷贝 /opt/ktouch（检查文件完整性 + 配置文件正确性）
+cp -r /opt/ktouch "$DIR_PROGRAM/ktouch"
+
+# 同时生成 md5 清单，方便快速比对
 find /opt/ktouch -type f -exec md5sum {} \; 2>/dev/null | sort > "$DIR_PROGRAM/file_md5.txt" || true
-
-# 复制关键脚本（用于分析代码逻辑）
-mkdir -p "$DIR_PROGRAM/scripts"
-for s in kscreen-remap kscreen-remap-daemon kscreen-setup kscreen-debug kscreen-fix-daemon kscreen-log; do
-    [ -f "$LOG_PATH/$s" ] && cp "$LOG_PATH/$s" "$DIR_PROGRAM/scripts/" 2>/dev/null || true
-done
-[ -f "$LOG_PATH/display_monitor.py" ] && cp "$LOG_PATH/display_monitor.py" "$DIR_PROGRAM/scripts/" 2>/dev/null || true
 
 # ============================================
 #  5. 整理 & 打包
