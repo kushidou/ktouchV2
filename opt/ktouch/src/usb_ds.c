@@ -84,6 +84,7 @@ int is_touchscreen(struct udev_device *dev) {
         
         if (strstr(lower_name, "touchscreen") != NULL ||
             strstr(lower_name, "touch") != NULL ||
+            strstr(lower_name, "ilitek") != NULL ||
             strstr(lower_name, "tablet") != NULL) {
             return 1;
         }

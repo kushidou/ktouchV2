@@ -214,7 +214,24 @@ int get_input_devices(InputDeviceInfo result[]) {
         
         
 
-        if (is_touchscreen){
+        // 通过名称关键词匹配（fallback，针对无ID_INPUT_TOUCHSCREEN属性的设备）
+        int name_matched = 0;
+        if (!is_touchscreen) {
+            char lower_name[256];
+            strncpy(lower_name, dev->name, sizeof(lower_name) - 1);
+            lower_name[sizeof(lower_name) - 1] = '\0';
+            for (int i = 0; lower_name[i]; i++) {
+                lower_name[i] = tolower(lower_name[i]);
+            }
+            if (strstr(lower_name, "ilitek") != NULL ||
+                strstr(lower_name, "touchscreen") != NULL ||
+                strstr(lower_name, "touch") != NULL ||
+                strstr(lower_name, "tablet") != NULL) {
+                name_matched = 1;
+            }
+        }
+
+        if (is_touchscreen || name_matched){
             // log_message("识别到触摸设备，添加到列表中\n    name=%s", name);
             // 初始化当前设备信息结构体
             result[count].device_id = dev->deviceid;

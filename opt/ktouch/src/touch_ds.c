@@ -374,7 +374,26 @@ int is_touchscreen_device(const char* device_node, char* vid, char* pid, int buf
         }
         
         if (!is_touchscreen) {
-            // printf("  未找到 ID_INPUT_TOUCHSCREEN=1 属性\n");
+            // 通过设备名称关键词匹配（fallback）
+            const char *dev_name = udev_device_get_property_value(dev, "NAME");
+            if (dev_name) {
+                char lower_name[256];
+                strncpy(lower_name, dev_name, sizeof(lower_name) - 1);
+                lower_name[sizeof(lower_name) - 1] = '\0';
+                for (int i = 0; lower_name[i]; i++) {
+                    lower_name[i] = tolower(lower_name[i]);
+                }
+                if (strstr(lower_name, "ilitek") != NULL ||
+                    strstr(lower_name, "touchscreen") != NULL ||
+                    strstr(lower_name, "touch") != NULL ||
+                    strstr(lower_name, "tablet") != NULL) {
+                    is_touchscreen = 1;
+                    const char *vendor_id = udev_device_get_property_value(dev, "ID_VENDOR_ID");
+                    const char *model_id = udev_device_get_property_value(dev, "ID_MODEL_ID");
+                    if (vendor_id) strncpy(vid, vendor_id, buffer_size);
+                    if (model_id) strncpy(pid, model_id, buffer_size);
+                }
+            }
         }
         
         udev_device_unref(dev);
