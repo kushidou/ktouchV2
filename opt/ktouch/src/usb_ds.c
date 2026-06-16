@@ -16,6 +16,7 @@
 #define DEFAULT_POLL_INTERVAL 5 // 默认轮询间隔为5秒
 #define MAX_RETRY_ATTEMPTS 3    // 最大重试次数
 #define RETRY_DELAY 1           // 重试延迟(秒)
+#define COOLDOWN_SECONDS 30     // 触摸屏检测冷却时间(秒)
 
 FILE *log_file = NULL;                   // 日志文件指针
 // 函数提前声明
@@ -213,6 +214,7 @@ void monitor_usb_devices(const char *control_file_path, int poll_interval) {
     printf("按Ctrl+C退出\n\n");
     
     // 主循环，监控设备事件
+    time_t last_trigger_time = 0; // 上次触发控制文件的时间
     while (keep_running) {
         fd_set fds;
         struct timeval tv;
@@ -292,28 +294,34 @@ void monitor_usb_devices(const char *control_file_path, int poll_interval) {
             }
         }
         
-        // 一轮检测完成后，如果需要更新控制文件状态
+        // 一轮检测完成后，如果需要更新控制文件状态（带冷却时间防重复触发）
         if (use_control_file && touchscreen_detected) {
-            if (write_file_content_with_retry(control_file_path, 1) == 0) {
-                log_message("已更新控制文件状态为1\n");
-                
-                // 等待文件状态恢复为0
-                printf("等待控制文件状态恢复为0...\n");
-                while (keep_running) {
-                    int current_status = read_file_content_with_retry(control_file_path);
-                    if (current_status == 0) {
-                        printf("控制文件状态已恢复为0，继续监控\n");
-                        break;
-                    } else if (current_status == -1) {
-                        printf("读取控制文件失败，等待%d秒后重试\n", poll_interval);
-                        sleep(poll_interval);
-                    } else {
-                        printf("当前控制文件状态: %d，等待%d秒后检查\n", current_status, poll_interval);
-                        sleep(poll_interval);
-                    }
-                }
+            time_t now = time(NULL);
+            if (difftime(now, last_trigger_time) < COOLDOWN_SECONDS) {
+                log_message("冷却中，跳过本次触发（距上次 %.0f 秒）\n", difftime(now, last_trigger_time));
             } else {
-                log_message("更新控制文件状态失败\n");
+                if (write_file_content_with_retry(control_file_path, 1) == 0) {
+                    last_trigger_time = time(NULL);
+                    log_message("已更新控制文件状态为1\n");
+                    
+                    // 等待文件状态恢复为0
+                    printf("等待控制文件状态恢复为0...\n");
+                    while (keep_running) {
+                        int current_status = read_file_content_with_retry(control_file_path);
+                        if (current_status == 0) {
+                            printf("控制文件状态已恢复为0，继续监控\n");
+                            break;
+                        } else if (current_status == -1) {
+                            printf("读取控制文件失败，等待%d秒后重试\n", poll_interval);
+                            sleep(poll_interval);
+                        } else {
+                            printf("当前控制文件状态: %d，等待%d秒后检查\n", current_status, poll_interval);
+                            sleep(poll_interval);
+                        }
+                    }
+                } else {
+                    log_message("更新控制文件状态失败\n");
+                }
             }
         }
     }
