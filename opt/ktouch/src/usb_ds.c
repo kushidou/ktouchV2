@@ -16,7 +16,7 @@
 #define DEFAULT_POLL_INTERVAL 5 // 默认轮询间隔为5秒
 #define MAX_RETRY_ATTEMPTS 3    // 最大重试次数
 #define RETRY_DELAY 1           // 重试延迟(秒)
-#define COOLDOWN_SECONDS 30     // 触摸屏检测冷却时间(秒)
+#define COOLDOWN_SECONDS 7     // 触摸屏检测冷却时间(秒)
 
 FILE *log_file = NULL;                   // 日志文件指针
 // 函数提前声明

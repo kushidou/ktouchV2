@@ -1,0 +1,16 @@
+ktouch (2.1) unstable; urgency=medium
+
+  * 适配只支持鼠标事件的屏幕
+  * 优化开发架构，发布的程序不再包含源代码
+
+ -- Kushidou <kushidou@small09.top>  Tue, 16 Jun 2026 14:00:00 +0800
+
+ktouch (2.0) unstable; urgency=medium
+
+  * 重新设计交互流程，更傻瓜易用
+  * 重构程序架构，采用更多原生可执行程序
+  * 为UOS添加显示器分辨率和位置设置工具
+  * 程序本体适配UOS和麒麟v10
+
+ -- Kushidou <kushidou@small09.top>  Mon, 25 Sep 2025 10:00:00 +0800
+

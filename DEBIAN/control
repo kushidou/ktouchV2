@@ -1,5 +1,5 @@
 Package: ktouch
-Version: 2.0
+Version: 2.1
 Architecture: arm64
 Maintainer: Kushidou <kushidou@small09.top>
 Depends: xinput, python3
