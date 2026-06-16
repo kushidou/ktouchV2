@@ -78,9 +78,9 @@ done
 #     display_monitor.py
 # )
 
-for exe in "${EXE_LIST[@]}"; do
-    [ -f "$BUILD_DIR/opt/ktouch/$exe" ] && chmod 755 "$BUILD_DIR/opt/ktouch/$exe"
-done
+# for exe in "${EXE_LIST[@]}"; do
+#     [ -f "$BUILD_DIR/opt/ktouch/$exe" ] && chmod 755 "$BUILD_DIR/opt/ktouch/$exe"
+# done
 
 # usr 下文档 644，目录 755
 find "$BUILD_DIR/usr" -type d -exec chmod 755 {} \;
