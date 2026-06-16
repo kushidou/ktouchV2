@@ -42,6 +42,7 @@ screen_ds_once
 touch_ds
 touch_set
 usb_ds
+check_save
 
 .codewhale
 .mimocode

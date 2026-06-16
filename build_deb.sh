@@ -39,6 +39,8 @@ mkdir -p "$BUILD_DIR/usr/share/doc/ktouch"
 
 cp -r "$SCRIPT_DIR/DEBIAN/"*  "$BUILD_DIR/DEBIAN/"
 cp -r "$SCRIPT_DIR/opt/ktouch" "$BUILD_DIR/opt/"
+# 排除不应打包的目录
+rm -rf "$BUILD_DIR/opt/ktouch/.codewhale"
 
 [ -f "$SCRIPT_DIR/changelog" ] && cp "$SCRIPT_DIR/changelog" "$BUILD_DIR/usr/share/doc/ktouch/changelog"
 [ -f "$SCRIPT_DIR/LICENSE"   ] && cp "$SCRIPT_DIR/LICENSE"   "$BUILD_DIR/usr/share/doc/ktouch/copyright"
@@ -76,9 +78,9 @@ done
 #     display_monitor.py
 # )
 
-# for exe in "${EXE_LIST[@]}"; do
-#     [ -f "$BUILD_DIR/opt/ktouch/$exe" ] && chmod 755 "$BUILD_DIR/opt/ktouch/$exe"
-# done
+for exe in "${EXE_LIST[@]}"; do
+    [ -f "$BUILD_DIR/opt/ktouch/$exe" ] && chmod 755 "$BUILD_DIR/opt/ktouch/$exe"
+done
 
 # usr 下文档 644，目录 755
 find "$BUILD_DIR/usr" -type d -exec chmod 755 {} \;
