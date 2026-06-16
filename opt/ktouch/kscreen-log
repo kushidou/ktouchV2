@@ -1,64 +1,217 @@
 #!/bin/bash
-# 搜集日志和配置文件，用于debug分析
+# ============================================
+#  ktouch 日志采集与打包脚本
+#  按类别分目录存储，方便排查触摸屏问题
+# ============================================
 
-log_path="/opt/ktouch"
-now=$(date "+%m%d-%H%M%S")
+set -e
 
+LOG_PATH="/opt/ktouch"
+NOW=$(date "+%m%d-%H%M%S")
+TMP_BASE="/tmp/klog_$NOW"
 
-tdir="/tmp/klog_$now"
+# ---------- 子目录定义 ----------
+DIR_SYSTEM="$TMP_BASE/system"
+DIR_HARDWARE="$TMP_BASE/hardware"
+DIR_APP="$TMP_BASE/app"
+DIR_PROGRAM="$TMP_BASE/program"
 
-mkdir $tdir && cd $tdir
+mkdir -p "$DIR_SYSTEM" "$DIR_HARDWARE" "$DIR_APP" "$DIR_PROGRAM"
 
-echo "正在收集日志文件，请注意需要输入sudo密码。"
+echo "正在采集日志（部分操作需 sudo）..."
 
-# cp /opt/ktouch/*log*    $tdir
-# cp /opt/ktouch/config   $tdir
-# cp /opt/ktouch/*.txt    $tdir
+# ============================================
+#  1. 系统日志  ───  system/
+# ============================================
+echo "  采集系统日志..."
 
-
-# 采集系统信息
-export DISPLAY=:0
-xinput > $tdir/xinput_info.txt
-for id in $(xinput list --id-only); do
-    xinput --list-props "$id" >> $tdir/xinput_props.txt
-    echo -e "\n\n" $tdir/xinput_props.txt
-done
-xrandr > $tdir/xrandr_info.txt
-sudo dmidecode > $tdir/dmidecode.txt
-lsusb       >>  $tdir/lsusb.txt
-lsusb -t    >>  $tdir/lsusb.txt
-lsblk -f    >>  $tdir/lsblk.txt
-lspci       >>  $tdir/lspci.txt
-
-if [ -f /etc/kylin-release ]; then
-    cat /etc/os-release /etc/kylin-release 2>/dev/null >> $tdir/os-version.txt
-elif [ -f /etc/uos-release ]; then
-    cat /etc/os-release /etc/uos-release /etc/os-version  2>/dev/null >> $tdir/os-version.txt
-else
-    cat /etc/os-release 2>/dev/null >> $tdir/os-version.txt
+# journalctl（系统服务日志）
+if command -v journalctl &>/dev/null; then
+    sudo journalctl -b -n 5000 --no-pager > "$DIR_SYSTEM/journal_boot.txt" 2>/dev/null || true
+    sudo journalctl -u ktouch_daemon --no-pager > "$DIR_SYSTEM/journal_ktouch.txt" 2>/dev/null || true
+    sudo journalctl -u lightdm --no-pager > "$DIR_SYSTEM/journal_lightdm.txt" 2>/dev/null || true
+    sudo journalctl -u sddm --no-pager > "$DIR_SYSTEM/journal_sddm.txt" 2>/dev/null || true
 fi
 
-# 采集系统的日志
-sudo cp /var/log/messages*  $tdir >/dev/null 2>&1
-sudo cp /var/log/boot*  $tdir >/dev/null 2>&1
-sudo cp /var/log/kern*    $tdir >/dev/null 2>&1
-sudo cp /var/log/Xorg*      $tdir >/dev/null 2>&1
-sudo cp /var/log/syslog*    $tdir >/dev/null 2>&1
+# dmesg 内核日志
+dmesg > "$DIR_SYSTEM/dmesg.txt" 2>/dev/null || true
 
+# 传统系统日志文件
+sudo cp /var/log/syslog*    "$DIR_SYSTEM/" 2>/dev/null || true
+sudo cp /var/log/messages*  "$DIR_SYSTEM/" 2>/dev/null || true
+sudo cp /var/log/kern*      "$DIR_SYSTEM/" 2>/dev/null || true
+sudo cp /var/log/boot*      "$DIR_SYSTEM/" 2>/dev/null || true
+sudo cp /var/log/Xorg*      "$DIR_SYSTEM/" 2>/dev/null || true
+sudo cp /var/log/dpkg*      "$DIR_SYSTEM/" 2>/dev/null || true
+sudo cp /var/log/apt/*      "$DIR_SYSTEM/" 2>/dev/null || true
 
-# 将程序和日志整体打包
-sudo cp /etc/systemd/system/ktouch_daemon.service  $tdir/ktouch_daemon.service
-sudo chmod 777 -R $tdir
-cp  -r  /opt/ktouch  $tdir/ktouch
+# 显示管理器日志
+[ -d /var/log/lightdm ] && sudo cp -r /var/log/lightdm "$DIR_SYSTEM/" 2>/dev/null || true
+[ -d /var/log/sddm   ] && sudo cp -r /var/log/sddm   "$DIR_SYSTEM/" 2>/dev/null || true
 
+# 系统版本
+if [ -f /etc/kylin-release ]; then
+    cat /etc/os-release /etc/kylin-release 2>/dev/null > "$DIR_SYSTEM/os_version.txt" || true
+elif [ -f /etc/uos-release ]; then
+    cat /etc/os-release /etc/uos-release /etc/os-version 2>/dev/null > "$DIR_SYSTEM/os_version.txt" || true
+else
+    cat /etc/os-release 2>/dev/null > "$DIR_SYSTEM/os_version.txt" || true
+fi
 
-ls -la ./        >> $tdir/fileinfo.txt
-ls -la ./ktouch  >> $tdir/fileinfo.txt
+# ============================================
+#  2. 硬件信息  ───  hardware/
+# ============================================
+echo "  采集硬件信息..."
+
+export DISPLAY=:0
+
+# X11 输入设备列表 + 属性（按设备分离）
+xinput list > "$DIR_HARDWARE/xinput_list.txt" 2>/dev/null || true
+for id in $(xinput list --id-only 2>/dev/null); do
+    echo "========== device id: $id ==========" >> "$DIR_HARDWARE/xinput_props.txt"
+    xinput list-props "$id" >> "$DIR_HARDWARE/xinput_props.txt" 2>/dev/null || true
+    echo "" >> "$DIR_HARDWARE/xinput_props.txt"
+done
+
+# xrandr 显示器信息
+xrandr --verbose > "$DIR_HARDWARE/xrandr.txt" 2>/dev/null || true
+
+# libinput 设备列表
+libinput list-devices > "$DIR_HARDWARE/libinput_devices.txt" 2>/dev/null || true
+
+# /proc/bus/input/devices（内核视角的输入设备）
+cat /proc/bus/input/devices > "$DIR_HARDWARE/input_devices.txt" 2>/dev/null || true
+
+# 每个 event 设备的 udev 信息
+mkdir -p "$DIR_HARDWARE/evdev/"
+for ev in /dev/input/event*; do
+    [ -e "$ev" ] || continue
+    name=$(basename "$ev")
+    echo "========== 设备路径: $ev ==========" >> "$DIR_HARDWARE/evdev/${name}_udev.txt"
+    udevadm info --query=all --name="$ev" >> "$DIR_HARDWARE/evdev/${name}_udev.txt" 2>/dev/null || true
+
+    # 尝试用 evtest 采集设备支持的事件类型（需要 root）
+    if command -v evtest &>/dev/null; then
+        sudo evtest --info "$ev" > "$DIR_HARDWARE/evdev/${name}_evtest.txt" 2>/dev/null || true &
+    fi
+done
+wait 2>/dev/null || true
+
+# 每个 event 设备的能力位（capabilities）
+for ev in /dev/input/event*; do
+    [ -e "$ev" ] || continue
+    name=$(basename "$ev")
+    echo "========== $ev ==========" >> "$DIR_HARDWARE/evdev/${name}_caps.txt"
+    if command -v evemu-describe &>/dev/null; then
+        evemu-describe "$ev" >> "$DIR_HARDWARE/evdev/${name}_caps.txt" 2>/dev/null || true
+    fi
+done
+
+# DRM 显示器信息
+mkdir -p "$DIR_HARDWARE/drm"
+for card in /sys/class/drm/card*-*; do
+    [ -e "$card" ] || continue
+    card_name=$(basename "$card")
+    mkdir -p "$DIR_HARDWARE/drm/$card_name"
+    for attr in status enabled modes dpms edid; do
+        [ -f "$card/$attr" ] && cp "$card/$attr" "$DIR_HARDWARE/drm/$card_name/$attr" 2>/dev/null || true
+    done
+done
+
+# USB 设备树
+lsusb       >  "$DIR_HARDWARE/lsusb.txt" 2>/dev/null || true
+lsusb -t    >> "$DIR_HARDWARE/lsusb.txt" 2>/dev/null || true
+lsusb -v    >  "$DIR_HARDWARE/lsusb_verbose.txt" 2>/dev/null || true
+
+# PCI 设备
+lspci -k    >  "$DIR_HARDWARE/lspci.txt" 2>/dev/null || true
+
+# 块设备
+lsblk -f    >  "$DIR_HARDWARE/lsblk.txt" 2>/dev/null || true
+
+# 硬件信息（需要 root）
+sudo dmidecode > "$DIR_HARDWARE/dmidecode.txt" 2>/dev/null || true
+
+# udev 规则
+[ -d /etc/udev/rules.d ] && cp -r /etc/udev/rules.d "$DIR_HARDWARE/udev_rules/" 2>/dev/null || true
+[ -d /lib/udev/rules.d  ] && cp -r /lib/udev/rules.d  "$DIR_HARDWARE/udev_rules_lib/" 2>/dev/null || true
+
+echo "程序版本: ktouch V2" > "$DIR_HARDWARE/ktouch_version.txt"
+[ -f "$LOG_PATH/kscreen-remap-daemon" ] && head -5 "$LOG_PATH/kscreen-remap-daemon" >> "$DIR_HARDWARE/ktouch_version.txt" 2>/dev/null || true
+
+# ============================================
+#  3. 程序日志与配置  ───  app/
+# ============================================
+echo "  采集程序日志和配置..."
+
+# 程序日志
+[ -f "$LOG_PATH/touchscreen.log"  ] && cp "$LOG_PATH/touchscreen.log"  "$DIR_APP/touchscreen.log"  2>/dev/null || true
+[ -f "$LOG_PATH/install.log"      ] && cp "$LOG_PATH/install.log"      "$DIR_APP/install.log"      2>/dev/null || true
+[ -f "$LOG_PATH/sub_modules.log"  ] && cp "$LOG_PATH/sub_modules.log"  "$DIR_APP/sub_modules.log"  2>/dev/null || true
+# 日志轮转文件
+for f in "$LOG_PATH/"*.log.*; do
+    [ -f "$f" ] && cp "$f" "$DIR_APP/" 2>/dev/null || true
+done
+
+# 触摸屏配置
+[ -f "$LOG_PATH/config"          ] && cp "$LOG_PATH/config"          "$DIR_APP/config"            2>/dev/null || true
+[ -f "$LOG_PATH/touch_dis_table.txt" ] && cp "$LOG_PATH/touch_dis_table.txt" "$DIR_APP/"           2>/dev/null || true
+
+# 显示器自定义分辨率配置
+[ -d "$LOG_PATH/display_config"  ] && cp -r "$LOG_PATH/display_config" "$DIR_APP/display_config"   2>/dev/null || true
+
+# /tmp/ktouch 缓存文件
+if [ -d /tmp/ktouch ]; then
+    mkdir -p "$DIR_APP/tmp_cache"
+    cp -r /tmp/ktouch/* "$DIR_APP/tmp_cache/" 2>/dev/null || true
+fi
+
+# systemd 服务文件
+[ -f /etc/systemd/system/ktouch_daemon.service ] && sudo cp /etc/systemd/system/ktouch_daemon.service "$DIR_APP/service_file" 2>/dev/null || true
+
+# ============================================
+#  4. 程序本体  ───  program/
+# ============================================
+echo "  采集程序文件清单..."
+
+# 文件列表（不复制整个目录，只记录清单 + md5）
+find /opt/ktouch -type f 2>/dev/null | sort > "$DIR_PROGRAM/file_list.txt"
+find /opt/ktouch -type f -exec md5sum {} \; 2>/dev/null | sort > "$DIR_PROGRAM/file_md5.txt" || true
+
+# 复制关键脚本（用于分析代码逻辑）
+mkdir -p "$DIR_PROGRAM/scripts"
+for s in kscreen-remap kscreen-remap-daemon kscreen-setup kscreen-debug kscreen-fix-daemon kscreen-log; do
+    [ -f "$LOG_PATH/$s" ] && cp "$LOG_PATH/$s" "$DIR_PROGRAM/scripts/" 2>/dev/null || true
+done
+[ -f "$LOG_PATH/display_monitor.py" ] && cp "$LOG_PATH/display_monitor.py" "$DIR_PROGRAM/scripts/" 2>/dev/null || true
+
+# ============================================
+#  5. 整理 & 打包
+# ============================================
+echo "  整理并打包..."
+
+# 统一权限
+sudo chmod 755 -R "$TMP_BASE" 2>/dev/null || true
+
+# 生成文件清单
+find "$TMP_BASE" -type f | sort > "$TMP_BASE/_file_index.txt"
 
 # 打包
-echo "正在打包文件，将会生成在主目录/家目录/个人文件夹"
-
+echo "正在生成压缩包..."
 cd /tmp
-tar -czf ~/ktouch_log-$now.tar.gz  ./klog_$now
+tar -czf ~/ktouch_log-"$NOW".tar.gz "klog_$NOW"
 
-rm -rf /tmp/klog
+# 清理
+rm -rf "$TMP_BASE"
+
+echo ""
+echo "============================================"
+echo "  日志采集完成"
+echo "  文件: ~/ktouch_log-${NOW}.tar.gz"
+echo "============================================"
+echo ""
+echo "压缩包结构:"
+echo "  system/    - 系统日志（journalctl, dmesg, syslog, Xorg...）"
+echo "  hardware/  - 硬件信息（xinput, xrandr, libinput, udev, evdev...）"
+echo "  app/       - 程序日志和配置（log, config, tmp_cache, service...）"
+echo "  program/   - 程序本体（文件清单 + md5 + 关键脚本）"
