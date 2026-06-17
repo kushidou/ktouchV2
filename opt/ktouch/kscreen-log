@@ -197,16 +197,12 @@ cd /tmp
 tar -czf ~/ktouch_log-"$NOW".tar.gz "klog_$NOW"
 
 # 清理
-rm -rf "$TMP_BASE"
+sudo rm -rf "$TMP_BASE"
 
 echo ""
 echo "============================================"
 echo "  日志采集完成"
-echo "  文件: ~/ktouch_log-${NOW}.tar.gz"
+echo "  文件在 主目录 或 个人 文件夹中"
+echo "  文件名：  ktouch_log-${NOW}.tar.gz"
 echo "============================================"
 echo ""
-echo "压缩包结构:"
-echo "  system/    - 系统日志（journalctl, dmesg, syslog, Xorg...）"
-echo "  hardware/  - 硬件信息（xinput, xrandr, libinput, udev, evdev...）"
-echo "  app/       - 程序日志和配置（log, config, tmp_cache, service...）"
-echo "  program/   - 程序本体（文件清单 + md5 + 关键脚本）"
